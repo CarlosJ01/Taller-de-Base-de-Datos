@@ -1,0 +1,158 @@
+--INDICES
+
+USE PRUEBA;
+
+--VAMOS A CREAR UNA TABLA DE EJEMPLO PARA TRABAJAR CON ELLA
+CREATE TABLE emp ( 
+	empId INT, 
+	empNombre VARCHAR(1000))
+GO
+
+-- CHECAR SI LA TABLA EMP TIENE INDICES CREADOS
+-- SI LA TABLA NO TIENE INDICES SE LLAMA TABLA TIPO HEAP
+SELECT * FROM sysindexes order by name
+
+SELECT OBJECT_NAME(i.id) AS tabla, 
+i.name AS iName, i.indid AS iId
+FROM sysindexes AS i
+
+-- INSERTAR DATOS FICTICIOS
+INSERT INTO emp VALUES(4, REPLICATE ('a', 1000))
+INSERT INTO emp VALUES(6, REPLICATE ('a', 1000))
+INSERT INTO emp VALUES(1, REPLICATE ('a', 1000))
+INSERT INTO emp VALUES(3, REPLICATE ('a', 1000))
+
+-- CONSULTAR EL RESULTADO
+-- NOS VAMOS A DAR CUENTA QUE SE INSERTAN EN EL ORDEN COMO LLEGARON 
+SELECT empID FROM emp
+SELECT * FROM emp;
+
+-- EJECUTAMOS EL COMANDO DBCC CON EL CODIGO 3604 PARA ENCENDER LA BANDERA QUE
+-- NOS PERMITA TRAER CIERTA INFORMACION DEL SISTEMA EN ESTA SESION
+DBCC TRACEON(3604)
+
+--COMO SABEMOS CADA TABLA ESTA ASOCIADA A UNA PAGINA-SEGMENTO-TABLESPACE-BLOQUE-EXTENT
+--NOS INTERESA SABER EL PAGEID, INDEXID, PAGETYPED
+DECLARE @DBID Int, @TableID Int
+SELECT @DBID = DB_ID(), @TableID = OBJECT_ID('emp')
+DBCC ind(@DBID, @TableID, -1)
+
+/*
+PagePID: Identificador de página.
+IndexID: Tipo de índice.
+		0: Página de datos
+		1: Clustered Index
+		2: >= 2 es página de índice (Non-clustered y Ordinary Index)
+PageType: Tipo de datos almacenados.
+		10: Index Allocation MAP (PARTICION QUE ALOJA INDICES)
+		1: Página de datos
+		2: Página de Indice
+*/
+
+-- CON LA INFORMACION QUE NOS DEVOLVIO NO TENEMOS PAGINA QUE RESERVE INDICES
+-- NO HAY NINGUNA PAGETYPE=2
+
+
+-- VAMOS A REVISAR EN ESPECIFICO LA PAGINA DE TIPO 1, PAGINA DE DATOS
+-- VAMOS A VER EL CONTENIDO QUE ESTA GUARDADO TAL COMO LO INSERTAMOS
+DBCC TRACEON (3604)
+Declare @DBID Int
+Select @DBID = db_id()
+DBCC page(@DBID, 1, 90, 3) -- PAGETYPE=1
+
+
+
+-- NON CLUSTERED INDEX
+
+-- SOBRE EL CAMPO ID DE LA TABLA EMP
+CREATE UNIQUE NONCLUSTERED INDEX emp_empId
+ON emp(empId)
+
+-- CHECAR DE NUEVO PAGEID, INDEXID, PAGETYPED
+DBCC TRACEON (3604) 
+DECLARE @DBID Int, @TableID Int
+SELECT @DBID = DB_ID(), @TableID = OBJECT_ID('emp')
+DBCC ind(@DBID, @TableID, -1)
+
+-- VAMOS A VER  NUEVA INFORMACION CON UNA PAGINA DE TIPO INDICE
+
+
+-- VAMOS A REVISAR EN ESPECIFICO LA PAGINA DE TIPO 2, PAGINA DE INDICE
+-- VAMOS A VER QUE EL ORDEN CAMBIO POR EL empID, LA LLAVE POR EL CUAL HICIMOS
+-- EL INDICE
+-- LA PAGINA DEL INDICE TIENE PUNTEROS HACIA EL CAMPO, Y NO IMPORTA QUE LA 
+-- INFORMACION ESTÉ EN DESORDEN
+DBCC TRACEON (3604)
+Declare @DBID Int
+Select @DBID = db_id()
+DBCC page(@DBID, 1, 94, 3) --PAGETYPE=2
+
+-- SI HACEMOS EL SELECT, LOS DATOS SALEN EN ORDEN
+SELECT empID FROM emp
+
+/*
+Este tipo de índices son particularmente útiles cuando queremos devolver 
+un único registro de la tabla, por ejemplo para buscar un empleado 
+con un ID determinado (empId = 3), donde el filtro se aplica 
+sobre la columna que tiene el índice Non-Clustered.
+UNA UNIQUE KEY CONSTRAINT CREA POR DEFAULT UN NON CLUSTERED INDEX
+SABEMOS QUE EN ESTE TIPO DE CONSTRAINT SE FORZA A QUE UN CAMPO NO LLAVE
+SEA UNICO*/
+
+
+
+
+-- CLUSTERED INDEX
+
+CREATE TABLE emp2 (
+    EmpId INT,
+	EmpName VARCHAR(1000)
+	)
+INSERT INTO emp2 VALUES (4, REPLICATE('a', 1000))
+INSERT INTO emp2 VALUES (6, REPLICATE('a', 1000))
+INSERT INTO emp2 VALUES (1, REPLICATE('a', 1000))
+INSERT INTO emp2 VALUES (3, REPLICATE('a', 1000))
+
+-- CHECAR PAGINAS
+DBCC TRACEON (3604)
+Declare @DBID Int, @TableID Int
+Select @DBID = db_id(), @TableID = object_id('emp2')
+DBCC ind(@DBID, @TableID, -1)
+
+--CHECAR ORDEN DE LA INFORMACION
+DBCC TRACEON (3604)
+Declare @DBID Int
+Select @DBID = db_id()
+DBCC page(@DBID, 1, 119, 3) --PAGETYPE=1
+
+
+CREATE UNIQUE CLUSTERED INDEX emp2_EmpIndex
+ON emp2 (EmpId)
+
+-- LOS DATOS NOS APARECEN ORDENADOS
+SELECT empID FROM emp
+
+DBCC TRACEON (3604)
+
+GO
+
+-- INDEXID=1 =CLUSTERED
+Declare @DBID Int, @TableID Int
+Select @DBID = db_id(), @TableID = object_id('emp2')
+DBCC ind(@DBID, @TableID, -1)
+
+--CHECAR EL CONTENIDO DE LA PAGINA DE DATOS
+-- APARECERAN ORDENADOS LOS REGISTROS
+DBCC TRACEON (3604)
+DECLARE @DBID Int
+SELECT @DBID = db_id()
+DBCC page(@DBID, 1, 121, 3) -- PAGETYPE=1
+
+/*
+Los Clustered Index son muy utiles cuando queremos recuperar conjuntos
+de registros, que estan comprendidos entre rangos de datos, 
+por ejemplo para buscar un conjunto de empleados que su ID está entre 3 y 9.
+Al tener los datos en los leaf(página) del árbol, se ahorra mucha E/S. 
+Sólo es posible tener un Clustered Index por tabla.
+UNA LLAVE PRIMARIA CREA POR DEFAULT UN CLUSTER INDEX 
+LA LLAVE SABEMOS TIENE DATOS UNICOS*/
